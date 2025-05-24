@@ -6,11 +6,15 @@ use Zwuiix\FormRecode\elements\Element;
 
 class Header extends Element
 {
+    /**
+     * @param string $text The text displayed in the header.
+     */
     public function __construct(
         private string $text,
     ) {}
 
     /**
+     * Gets the header text.
      * @return string
      */
     public function getText(): string
@@ -19,6 +23,7 @@ class Header extends Element
     }
 
     /**
+     * Sets the header text.
      * @param string $text
      */
     public function setText(string $text): void
@@ -27,10 +32,14 @@ class Header extends Element
     }
 
     /**
+     * Serializes the header element to JSON.
      * @return array
      */
     public function jsonSerialize(): array
     {
-        return ["type" => "header", "text" => $this->text];
+        return [
+            "type" => "header",
+            "text" => $this->text
+        ];
     }
 }

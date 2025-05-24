@@ -3,23 +3,33 @@
 namespace Zwuiix\FormRecode;
 
 use Closure;
-use \pocketmine\form\Form as FormPM;
+use pocketmine\form\Form as PMForm;
 use pocketmine\network\mcpe\protocol\ClientboundCloseFormPacket;
 use pocketmine\network\mcpe\protocol\ModalFormResponsePacket;
-use pocketmine\network\PacketHandlingException;
 use pocketmine\player\Player;
 use Zwuiix\FormRecode\inventory\FakeInventoryWindow;
+use ReflectionClass;
+use JsonException;
 
 /**
+ * Base class for custom forms.
+ * Internal usage only.
+ *
  * @internal
  */
-abstract class IForm implements FormPM
+abstract class IForm implements PMForm
 {
     private const MAX_RESPONSE_LENGTH = 2048;
 
-    private ?Closure $onClose = null;
+    /** @var string Unique identifier used to match the fake inventory window */
     private string $uniqueId;
 
+    /** @var Closure|null Callback when the form is closed without a response */
+    private ?Closure $onClose = null;
+
+    /**
+     * @param string $title
+     */
     public function __construct(
         private string $title = ""
     ) {
@@ -27,118 +37,130 @@ abstract class IForm implements FormPM
     }
 
     /**
+     * Returns the form's unique ID (used to verify inventory state).
      * @return string
      */
-    public function getUniqueId(): string
-    {
+    public function getUniqueId(): string {
         return $this->uniqueId;
     }
 
+    /**
+     * Get the response depth allowed for decoding the form response JSON.
+     * @return int
+     */
     abstract public function getResponseDepth(): int;
+
+    /**
+     * Process the decoded form response.
+     * @param Player $player
+     * @param mixed $responseData
+     * @return void
+     */
     abstract public function process(Player $player, mixed $responseData): void;
 
     /**
      * @return string
      */
-    public function getTitle(): string
-    {
+    public function getTitle(): string {
         return $this->title;
     }
 
     /**
      * @param string $title
+     * @return void
      */
-    public function setTitle(string $title): void
-    {
+    public function setTitle(string $title): void {
         $this->title = $title;
     }
 
     /**
-     * @param Player $player
-     * @param $data
-     * @return void
-     */
-    final public function handleResponse(Player $player, $data): void
-    {
-        // Fuck PMMP
-    }
-
-    /**
+     * Sets a callback to be executed if the player closes the form without answering.
      * @param Closure $closure
-     * @return IForm
+     * @return $this
      */
-    final public function onClose(Closure $closure): IForm
-    {
+    final public function onClose(Closure $closure): IForm {
         $this->onClose = $closure;
         return $this;
     }
 
     /**
+     * Called when the form response is received.
      * @param Player $player
      * @param ModalFormResponsePacket $pk
      * @return void
      */
-    final public function handle(Player $player, ModalFormResponsePacket $pk): void
-    {
-        if(!$player->isConnected()) return;
+    final public function handle(Player $player, ModalFormResponsePacket $pk): void {
+        if (!$player->isConnected()) return;
 
-        $reflect = new \ReflectionClass(Player::class);
-        $reflectForms = $reflect->getProperty("forms");
-        $forms = $reflectForms->getValue($player);
+        $reflect = new ReflectionClass(Player::class);
+        $forms = $reflect->getProperty("forms")->getValue($player);
 
         $currentWindow = $player->getCurrentWindow();
-        if(!$currentWindow instanceof FakeInventoryWindow || $currentWindow->getUniqueId() !== $this->uniqueId) {
-            var_dump($currentWindow);
+        if (!$currentWindow instanceof FakeInventoryWindow || $currentWindow->getUniqueId() !== $this->uniqueId) {
+            // Mismatched or missing inventory window — possible spoof or desync
             $player->getNetworkSession()->disconnectWithError("Failed to handle form");
             return;
         }
 
-        if($pk->cancelReason !== null) {
-            if($this->onClose !== null) {
+        if ($pk->cancelReason !== null) {
+            // Form was closed without input
+            if ($this->onClose !== null) {
                 ($this->onClose)($player);
             }
-        } else if($pk->formData !== null) {
-            if(strlen($pk->formData) > self::MAX_RESPONSE_LENGTH) {
-                $player->getNetworkSession()->disconnectWithError("Failed to decode form response data");
+        } elseif ($pk->formData !== null) {
+            if (strlen($pk->formData) > self::MAX_RESPONSE_LENGTH) {
+                $player->getNetworkSession()->disconnectWithError("Form response too large.");
                 return;
             }
 
-            try{
+            try {
                 $responseData = json_decode($pk->formData, true, $this->getResponseDepth(), JSON_THROW_ON_ERROR);
-            }catch(\JsonException $e){
-                $player->getNetworkSession()->disconnectWithError("Failed to decode form response data");
+            } catch (JsonException) {
+                $player->getNetworkSession()->disconnectWithError("Invalid form response.");
                 return;
             }
 
             $this->process($player, $responseData);
         }
 
+        // Unregister the form
         unset($forms[$pk->formId]);
-        $reflectForms->setValue($player, $forms);
+        $reflect->getProperty("forms")->setValue($player, $forms);
+
+        // Close fake inventory lock
+        $player->removeCurrentWindow();
+
+        // Close form
         $player->getNetworkSession()->sendDataPacket(ClientboundCloseFormPacket::create());
     }
 
     /**
+     * Sends the form to the given player.
      * @param Player $player
      * @return void
-     * @throws \JsonException
+     * @throws JsonException
      */
-    final public function send(Player $player)
-    {
-        if(!$player->isConnected()) return;
+    final public function send(Player $player): void {
+        if (!$player->isConnected()) return;
 
-        $reflect = new \ReflectionClass(Player::class);
-        $reflectId = $reflect->getProperty("formIdCounter");
-        $reflectForms = $reflect->getProperty("forms");
+        $reflect = new ReflectionClass(Player::class);
+        $formId = $reflect->getProperty("formIdCounter");
+        $forms = $reflect->getProperty("forms");
 
-        $id = $reflectId->getValue($player);
-        ++$id;
-        $reflectId->setValue($player, $id);
+        $id = $formId->getValue($player);
+        $formId->setValue($player, ++$id);
 
-        $forms = $reflectForms->getValue($player);
-        $forms[$id] = $this;
-        $reflectForms->setValue($player, $forms);
+        $formList = $forms->getValue($player);
+        $formList[$id] = $this;
+        $forms->setValue($player, $formList);
 
         $player->getNetworkSession()->onFormSent($id, $this);
+    }
+
+    /**
+     * Useless (PMMP override only).
+     */
+    final public function handleResponse(Player $player, $data): void {
+        // Unused due to custom hooker system
     }
 }

@@ -2,7 +2,4 @@
 
 namespace Zwuiix\FormRecode\elements;
 
-abstract class Element implements \JsonSerializable
-{
-
-}
+abstract class Element implements \JsonSerializable {}
