@@ -1,0 +1,6 @@
+name: FormRecode
+version: 1.0.1
+api: 5.11.0
+author: Zwuiix
+main: FormRecode
+load: STARTUP
