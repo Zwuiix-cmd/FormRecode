@@ -29,6 +29,7 @@ use Zwuiix\FormRecode\types\Form;
 use Zwuiix\FormRecode\elements\v786\Label;
 use Zwuiix\FormRecode\elements\v786\Divider;
 use Zwuiix\FormRecode\elements\v786\Header;
+use Zwuiix\FormRecode\elements\Button;
 use pocketmine\player\Player;
 use pocketmine\utils\TextFormat;
 
@@ -47,7 +48,7 @@ $form->addButton("Hello!", "first");
 $form->addButton("Bye!", "second");
 
 // Handle form submission (button click)
-$form->onSubmit(function (Player $player, $button) {
+$form->onSubmit(function (Player $player, Button $button) {
     $player->sendMessage(TextFormat::GREEN . "You pressed the button ID: {$button->getId()}, Label: {$button->getLabel()}, Text: {$button->getText()}!");
 });
 
